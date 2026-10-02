@@ -1,14 +1,22 @@
 name: Build AIC8800 SDIO driver (loongarch64)
 
 # 交叉编译 radxa-pkg/aic8800 的 SDIO 内核模块，目标 AOSC OS 6.12.35.lsgd / loongarch64。
-# 不在板子上安装 gcc（避免连带升级 glibc）。产物：3 个 .ko + aic8800D80 固件。
+# 不在板子上安装 gcc（避免连带升级 glibc）。
+#
+# 为什么用完整上游源码：AOSC 的 kernel headers 包不含 arch/loongarch/include，
+# 无法直接编译外部模块。AOSC 内核 = 上游 6.12.35 + 补丁，故用上游源码做 KDIR，
+# 但沿用 AOSC 的 .config 与 Module.symvers，保证 vermagic / 符号 CRC 与运行内核一致。
 on:
   workflow_dispatch:
     inputs:
       kernel_deb:
-        description: "AOSC kernel package (.deb) URL providing /usr/src/linux-headers-*"
+        description: "AOSC kernel package (.deb) URL providing .config + Module.symvers"
         required: true
         default: "https://repo-hk.aosc.io/debs/pool/stable/bsp-loongarch64-nosimd/l/linux-kernel-loongarch-2k0300-6.12.35_6.12.35-0_loongarch64.deb"
+      kernel_tar:
+        description: "Upstream kernel source tarball (must match AOSC kernel version)"
+        required: true
+        default: "https://mirrors.kernel.org/pub/linux/kernel/v6.x/linux-6.12.35.tar.xz"
       driver_ref:
         description: "radxa-pkg/aic8800 git ref"
         required: true
@@ -26,44 +34,38 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gcc-14-loongarch64-linux-gnu binutils-loongarch64-linux-gnu \
-            make bc bison flex libssl-dev libelf-dev patch
+            make bc bison flex libssl-dev libelf-dev patch xz-utils
           for b in gcc gcc-ar gcc-nm gcc-ranlib; do
             sudo ln -sf "/usr/bin/loongarch64-linux-gnu-${b}-14" "/usr/bin/loongarch64-linux-gnu-${b}"
           done
           loongarch64-linux-gnu-gcc --version | head -1
 
-      - name: Fetch AOSC kernel headers
+      - name: Fetch AOSC kernel package (authoritative .config + Module.symvers)
         run: |
           curl -fL -o /tmp/kernel.deb "${{ inputs.kernel_deb }}"
           mkdir -p kroot && dpkg-deb -x /tmp/kernel.deb kroot
-          ls -la kroot/usr/src/
-          KDIR="$(pwd)/$(echo kroot/usr/src/linux-headers-*)"
-          echo "KDIR=$KDIR" >> "$GITHUB_ENV"
-          echo "--- KDIR required files ---"
-          for f in .config Module.symvers scripts/mod/modpost include/config include/generated; do
-            [ -e "$KDIR/$f" ] && echo "OK  $f" || echo "MISS $f"
+          KPKG="$(pwd)/$(echo kroot/usr/src/linux-headers-*)"
+          echo "KPKG=$KPKG" >> "$GITHUB_ENV"
+          for f in .config Module.symvers include/config/kernel.release; do
+            [ -e "$KPKG/$f" ] && echo "OK  $f" || echo "MISS $f"
           done
-          file "$KDIR/scripts/mod/modpost" 2>/dev/null || true
 
-      - name: Prepare kernel tree (x86 host tools + generated asm headers)
+      - name: Fetch upstream kernel source (full tree required for arch headers)
+        run: |
+          curl -fL -o /tmp/linux.tar.xz "${{ inputs.kernel_tar }}"
+          mkdir -p ksrc && tar -xf /tmp/linux.tar.xz -C ksrc --strip-components=1
+          echo "KDIR=$(pwd)/ksrc" >> "$GITHUB_ENV"
+
+      - name: Prepare kernel build tree (cross, with AOSC config)
         run: |
           set -x
-          # AOSC 的 headers 是 loongarch 原生构建产物：
-          #  - scripts/mod/modpost 等 host 工具是 loongarch ELF，x86 runner 无法执行 -> 删掉用 HOSTCC 重建
-          #  - arch/loongarch/include/generated 需重新生成，否则交叉编译报 asm/*.h not found
-          find "$KDIR/scripts" -name '*.cmd' -delete
-          rm -f "$KDIR/scripts/mod/modpost" \
-                "$KDIR/scripts/mod/mk_elfconfig" \
-                "$KDIR/scripts/basic/fixdep" \
-                "$KDIR/scripts/genksyms/genksyms" \
-                "$KDIR/scripts/asn1_compiler" \
-                "$KDIR/scripts/kallsyms" \
-                "$KDIR/scripts/recordmcount" \
-                "$KDIR/scripts/insert-sys-cert"
-          make -C "$KDIR" ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- \
-               HOSTCC=gcc HOSTCXX=g++ modules_prepare
-          echo "--- modpost now ---"; file "$KDIR/scripts/mod/modpost"
-          echo "--- generated asm ---"; ls "$KDIR/arch/loongarch/include/generated/" | head
+          cp "$KPKG/.config" "$KDIR/.config"
+          make -C "$KDIR" ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- HOSTCC=gcc HOSTCXX=g++ olddefconfig
+          make -C "$KDIR" ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- HOSTCC=gcc HOSTCXX=g++ modules_prepare
+          cp "$KPKG/Module.symvers" "$KDIR/Module.symvers"
+          echo "--- kernel.release ---"; cat "$KDIR/include/config/kernel.release"
+          echo "--- symvers lines ---"; wc -l "$KDIR/Module.symvers"
+          echo "--- modpost arch ---"; file "$KDIR/scripts/mod/modpost"
 
       - name: Checkout aic8800 driver
         uses: actions/checkout@v4
