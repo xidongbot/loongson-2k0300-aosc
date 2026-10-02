@@ -33,27 +33,24 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             gcc-14-loongarch64-linux-gnu binutils-loongarch64-linux-gnu \
             make bc bison flex libssl-dev libelf-dev patch xz-utils \
-            u-boot-tools jq dwarves cpio rsync
+            u-boot-tools jq dwarves cpio rsync libgnutls28-dev python3-dev swig pkg-config
           for b in gcc gcc-ar gcc-nm gcc-ranlib; do
             sudo ln -sf "/usr/bin/loongarch64-linux-gnu-${b}-14" "/usr/bin/loongarch64-linux-gnu-${b}"
           done
           loongarch64-linux-gnu-gcc --version | head -1
           mkimage -V 2>&1 | head -1
 
-      - name: Ensure a mkimage that understands loongarch
+      - name: Build a mkimage that understands loongarch
         run: |
-          printf 'test' > /tmp/four
-          if mkimage -A loongarch -O linux -T kernel -C none -n t -d /tmp/four /tmp/t.img 2>/tmp/mk.err; then
-            echo "system mkimage supports loongarch"
-          else
-            echo "system mkimage lacks loongarch ($(cat /tmp/mk.err)); building upstream u-boot mkimage"
-            git clone --depth 1 https://github.com/u-boot/u-boot.git /tmp/uboot
-            make -C /tmp/uboot tools-only_defconfig >/dev/null
-            make -C /tmp/uboot HOSTCC=gcc -j"$(nproc)" tools/mkimage >/dev/null
-            sudo cp -v /tmp/uboot/tools/mkimage /usr/local/bin/mkimage
-          fi
+          # Ubuntu 的 u-boot-tools mkimage 不认 -A loongarch，现场用 upstream u-boot 编一个。
+          git clone --depth 1 https://github.com/u-boot/u-boot.git /tmp/uboot
+          make -C /tmp/uboot tools-only_defconfig >/dev/null
+          make -C /tmp/uboot HOSTCC=gcc -j"$(nproc)" tools >/dev/null
+          sudo cp -v /tmp/uboot/tools/mkimage /usr/local/bin/mkimage
           which mkimage
-          mkimage -A loongarch -O linux -T kernel -C none -n t -d /tmp/four /tmp/t.img && echo "mkimage loongarch OK"
+          mkimage -V
+          printf 'test' > /tmp/four
+          mkimage -A loongarch -O linux -T kernel -C none -a 0 -e 0 -n t -d /tmp/four /tmp/t.img >/dev/null && echo "mkimage loongarch OK"
 
       - name: Fetch AOSC kernel package (authoritative .config)
         run: |
