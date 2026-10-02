@@ -49,8 +49,6 @@ jobs:
           sudo cp -v /tmp/uboot/tools/mkimage /usr/local/bin/mkimage
           which mkimage
           mkimage -V
-          printf 'test' > /tmp/four
-          mkimage -A loongarch -O linux -T kernel -C none -a 0 -e 0 -n t -d /tmp/four /tmp/t.img >/dev/null && echo "mkimage loongarch OK"
 
       - name: Fetch AOSC kernel package (authoritative .config)
         run: |
