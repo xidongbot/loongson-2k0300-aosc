@@ -78,7 +78,8 @@ jobs:
         working-directory: aic8800
         run: |
           for p in fix-sdio-firmware-path fix-sdio-per-chip-firmware-path \
-                   fix-sdio-fall-through fix-vmalloc-not-include; do
+                   fix-sdio-fall-through fix-vmalloc-not-include \
+                   fix-Lower-the-debugging-log-level; do
             echo "== applying $p =="
             patch -p1 -i "debian/patches/$p.patch"
           done
