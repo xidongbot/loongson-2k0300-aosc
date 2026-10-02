@@ -84,7 +84,7 @@ if (cmd->opcode == 53) {
 5. **连接 Wi-Fi**：
 
    ```bash
-   sudo /tmp/connect-wifi.sh WIFI_LEE <REDACTED>
+   sudo /tmp/connect-wifi.sh "<SSID>" "<密码>"
    ```
 
 ## 已知问题与回滚
