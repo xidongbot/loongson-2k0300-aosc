@@ -87,3 +87,11 @@ sudo dd if=/dev/sda of=/dev/mmcblk0 bs=1M count=3694 conv=fsync status=progress
 ## 一句话总结
 
 厂商的 eMMC 更新机制（`general_load`）是为 ~150 MB 的小镜像设计的；AOSC 的 740 MB 压缩 rootfs 超出了它的能力，只能走“U 盘做系统盘 → U-Boot 正确引导 → Linux 内 dd 写 eMMC”这条路。而这条路上真正的拦路虎是 **U-Boot fork 的 `bootm` bug** 和 **U-Boot DTB 不能给内核用** 这两点。
+
+## 后续：板载 Wi-Fi（AIC8800）支持
+
+已在同仓库补齐板载 AIC8800 SDIO Wi-Fi 支持：用 GitHub Actions 交叉编译驱动模块，
+并重建 AOSC 6.12.35 内核注入 SDIO CMD53 quirk。最终 `wlan0` 可连接 `WIFI_LEE` 并上网
+（`curl --interface wlan0 http://www.baidu.com` → HTTP 200）。
+
+详见 [`wifi/README.md`](wifi/README.md)。
