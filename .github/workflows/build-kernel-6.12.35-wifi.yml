@@ -40,16 +40,6 @@ jobs:
           loongarch64-linux-gnu-gcc --version | head -1
           mkimage -V 2>&1 | head -1
 
-      - name: Build a mkimage that understands loongarch
-        run: |
-          # Ubuntu 的 u-boot-tools mkimage 不认 -A loongarch，现场用 upstream u-boot 编一个。
-          git clone --depth 1 https://github.com/u-boot/u-boot.git /tmp/uboot
-          make -C /tmp/uboot tools-only_defconfig >/dev/null
-          make -C /tmp/uboot HOSTCC=gcc -j"$(nproc)" tools >/dev/null
-          sudo cp -v /tmp/uboot/tools/mkimage /usr/local/bin/mkimage
-          which mkimage
-          mkimage -V
-
       - name: Fetch AOSC kernel package (authoritative .config)
         run: |
           curl -fL -o /tmp/kernel.deb "${{ inputs.kernel_deb }}"
@@ -108,23 +98,42 @@ jobs:
           PY
           grep -n -B2 -A6 "opcode == 53" drivers/mmc/host/ls2kmci.c
 
-      - name: Configure and build uImage + modules
+      - name: Configure and build kernel + construct uImage
         working-directory: ksrc
         run: |
           set -x
           cp "$KPKG/.config" .config
           make ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- olddefconfig
           grep -E "^CONFIG_LOCALVERSION=|^CONFIG_MODVERSIONS=|^CONFIG_CFG80211=" .config
-          make ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- -j"$(nproc)" uImage modules
-          ls -la arch/loongarch/boot/
+          make ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- -j"$(nproc)" vmlinux
+          make ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- arch/loongarch/boot/vmlinux.bin.gz
+          ENTRY="$(readelf -h vmlinux | awk '/Entry point address/{print $NF}')"
+          echo "ENTRY=$ENTRY"
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          python3 "$GITHUB_WORKSPACE/scripts/uimage-mkimage.py" \
+            -A loongarch -O linux -T kernel -C gzip \
+            -a 0x9000000000200000 -e "$ENTRY" -n "Linux-6.12.35.lsgd" \
+            -d arch/loongarch/boot/vmlinux.bin.gz \
+            "$GITHUB_WORKSPACE/out/uImage"
+          make ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- -j"$(nproc)" modules
           echo "ko count: $(find . -name '*.ko' | wc -l)"
 
       - name: Collect artifacts
         run: |
-          mkdir -p out
-          cp -v ksrc/arch/loongarch/boot/uImage out/
+          ls -la out/
           file out/uImage
-          strings out/uImage | grep -m1 "6.12.35" || true
+          python3 - <<'PY'
+          import struct, zlib
+          d = open("out/uImage","rb").read()
+          h = d[:64]
+          magic,hcrc,t,size,load,ep,dcrc,os_,arch,typ,comp = struct.unpack(">7I4B", h[:32])
+          assert magic == 0x27051956, "bad magic"
+          assert zlib.crc32(h[:4]+b"\x00\x00\x00\x00"+h[8:]) & 0xffffffff == hcrc, "bad header crc"
+          assert zlib.crc32(d[64:]) & 0xffffffff == dcrc, "bad data crc"
+          assert size == len(d) - 64, "bad size"
+          print("uImage OK: os=%d arch=%d type=%d comp=%d load=0x%08x entry=0x%08x size=%d name=%r" % (
+                os_, arch, typ, comp, load, ep, size, h[32:64].split(b"\x00")[0].decode()))
+          PY
 
       - name: Upload
         uses: actions/upload-artifact@v4
