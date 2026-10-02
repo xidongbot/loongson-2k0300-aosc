@@ -1,0 +1,80 @@
+name: Build AIC8800 SDIO driver (loongarch64)
+
+# 交叉编译 radxa-pkg/aic8800 的 SDIO 内核模块，目标 AOSC OS 6.12.35.lsgd / loongarch64。
+# 不在板子上安装 gcc（避免连带升级 glibc）。产物：3 个 .ko + aic8800D80 固件。
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_deb:
+        description: "AOSC kernel package (.deb) URL providing /usr/src/linux-headers-*"
+        required: true
+        default: "https://repo-hk.aosc.io/debs/pool/stable/bsp-loongarch64-nosimd/l/linux-kernel-loongarch-2k0300-6.12.35_6.12.35-0_loongarch64.deb"
+      driver_ref:
+        description: "radxa-pkg/aic8800 git ref"
+        required: true
+        default: "main"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Install loongarch64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-14-loongarch64-linux-gnu binutils-loongarch64-linux-gnu \
+            make bc bison flex libssl-dev libelf-dev patch
+          for b in gcc gcc-ar gcc-nm gcc-ranlib; do
+            sudo ln -sf "/usr/bin/loongarch64-linux-gnu-${b}-14" "/usr/bin/loongarch64-linux-gnu-${b}"
+          done
+          loongarch64-linux-gnu-gcc --version | head -1
+
+      - name: Fetch AOSC kernel headers
+        run: |
+          curl -fL -o /tmp/kernel.deb "${{ inputs.kernel_deb }}"
+          mkdir -p kroot && dpkg-deb -x /tmp/kernel.deb kroot
+          ls -la kroot/usr/src/
+          KDIR="$(pwd)/$(echo kroot/usr/src/linux-headers-*)"
+          echo "KDIR=$KDIR" >> "$GITHUB_ENV"
+          echo "--- KDIR required files ---"
+          for f in .config Module.symvers scripts/mod/modpost include/config include/generated; do
+            [ -e "$KDIR/$f" ] && echo "OK  $f" || echo "MISS $f"
+          done
+          file "$KDIR/scripts/mod/modpost" 2>/dev/null || true
+
+      - name: Checkout aic8800 driver
+        uses: actions/checkout@v4
+        with:
+          repository: radxa-pkg/aic8800
+          ref: ${{ inputs.driver_ref }}
+          path: aic8800
+
+      - name: Apply firmware-path patches
+        working-directory: aic8800
+        run: |
+          for p in fix-sdio-firmware-path fix-sdio-per-chip-firmware-path fix-sdio-fall-through; do
+            echo "== applying $p =="
+            patch -p1 -i "debian/patches/$p.patch"
+          done
+
+      - name: Build modules
+        run: |
+          make -C aic8800/src/SDIO/driver_fw/driver/aic8800 \
+            KDIR="$KDIR" ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- \
+            modules -j"$(nproc)"
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out/firmware
+          find aic8800 -name '*.ko' -exec cp -v {} out/ \;
+          cp -v aic8800/src/SDIO/driver_fw/fw/aic8800D80/* out/firmware/
+          echo "=== out ==="; ls -la out out/firmware
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: aic8800-sdio-loongarch64
+          path: out/
