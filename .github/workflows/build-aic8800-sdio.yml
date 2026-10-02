@@ -45,6 +45,26 @@ jobs:
           done
           file "$KDIR/scripts/mod/modpost" 2>/dev/null || true
 
+      - name: Prepare kernel tree (x86 host tools + generated asm headers)
+        run: |
+          set -x
+          # AOSC 的 headers 是 loongarch 原生构建产物：
+          #  - scripts/mod/modpost 等 host 工具是 loongarch ELF，x86 runner 无法执行 -> 删掉用 HOSTCC 重建
+          #  - arch/loongarch/include/generated 需重新生成，否则交叉编译报 asm/*.h not found
+          find "$KDIR/scripts" -name '*.cmd' -delete
+          rm -f "$KDIR/scripts/mod/modpost" \
+                "$KDIR/scripts/mod/mk_elfconfig" \
+                "$KDIR/scripts/basic/fixdep" \
+                "$KDIR/scripts/genksyms/genksyms" \
+                "$KDIR/scripts/asn1_compiler" \
+                "$KDIR/scripts/kallsyms" \
+                "$KDIR/scripts/recordmcount" \
+                "$KDIR/scripts/insert-sys-cert"
+          make -C "$KDIR" ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- \
+               HOSTCC=gcc HOSTCXX=g++ modules_prepare
+          echo "--- modpost now ---"; file "$KDIR/scripts/mod/modpost"
+          echo "--- generated asm ---"; ls "$KDIR/arch/loongarch/include/generated/" | head
+
       - name: Checkout aic8800 driver
         uses: actions/checkout@v4
         with:
