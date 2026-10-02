@@ -40,6 +40,21 @@ jobs:
           loongarch64-linux-gnu-gcc --version | head -1
           mkimage -V 2>&1 | head -1
 
+      - name: Ensure a mkimage that understands loongarch
+        run: |
+          printf 'test' > /tmp/four
+          if mkimage -A loongarch -O linux -T kernel -C none -n t -d /tmp/four /tmp/t.img 2>/tmp/mk.err; then
+            echo "system mkimage supports loongarch"
+          else
+            echo "system mkimage lacks loongarch ($(cat /tmp/mk.err)); building upstream u-boot mkimage"
+            git clone --depth 1 https://github.com/u-boot/u-boot.git /tmp/uboot
+            make -C /tmp/uboot tools-only_defconfig >/dev/null
+            make -C /tmp/uboot HOSTCC=gcc -j"$(nproc)" tools >/dev/null
+            sudo cp -v /tmp/uboot/tools/mkimage /usr/local/bin/mkimage
+          fi
+          which mkimage
+          mkimage -A loongarch -O linux -T kernel -C none -n t -d /tmp/four /tmp/t.img && echo "mkimage loongarch OK"
+
       - name: Fetch AOSC kernel package (authoritative .config)
         run: |
           curl -fL -o /tmp/kernel.deb "${{ inputs.kernel_deb }}"
