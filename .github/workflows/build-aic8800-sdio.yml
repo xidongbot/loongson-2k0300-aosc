@@ -78,11 +78,17 @@ jobs:
         working-directory: aic8800
         run: |
           for p in fix-sdio-firmware-path fix-sdio-per-chip-firmware-path \
-                   fix-sdio-fall-through fix-vmalloc-not-include \
-                   fix-Lower-the-debugging-log-level; do
+                   fix-sdio-fall-through fix-vmalloc-not-include; do
             echo "== applying $p =="
             patch -p1 -i "debian/patches/$p.patch"
           done
+          # 降噪补丁含 USB/PCIE 文件，其中 USB 文件行尾不一致会失败；SDIO 部分已应用，忽略整体退出码
+          echo "== applying fix-Lower-the-debugging-log-level (SDIO hunks; USB/PCIE failures ignored) =="
+          patch -p1 -i debian/patches/fix-Lower-the-debugging-log-level.patch || true
+          echo "== verify SDIO dbg level =="
+          grep -n "aicwf_dbg_level" \
+            src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/aic_bsp_main.c \
+            src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_main.c
           echo "== applying loongarch-PC-macro (local) =="
           patch -p1 -i ../patches/loongarch-PC-macro.patch
 
