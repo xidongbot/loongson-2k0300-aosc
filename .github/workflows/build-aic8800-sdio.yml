@@ -94,9 +94,13 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p out/firmware
-          find aic8800 -name '*.ko' -exec cp -v {} out/ \;
+          # 只取本次编译产物，避免误收仓库自带的 ARM 预编译 .ko
+          D=aic8800/src/SDIO/driver_fw/driver/aic8800
+          cp -v "$D/aic8800_bsp/aic8800_bsp.ko"     out/
+          cp -v "$D/aic8800_fdrv/aic8800_fdrv.ko"   out/
+          cp -v "$D/aic8800_btlpm/aic8800_btlpm.ko" out/
           cp -v aic8800/src/SDIO/driver_fw/fw/aic8800D80/* out/firmware/
-          echo "=== out ==="; ls -la out out/firmware
+          echo "=== out ==="; ls -la out out/firmware; file out/*.ko
 
       - name: Upload
         uses: actions/upload-artifact@v4
