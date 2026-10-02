@@ -49,7 +49,7 @@ jobs:
             echo "system mkimage lacks loongarch ($(cat /tmp/mk.err)); building upstream u-boot mkimage"
             git clone --depth 1 https://github.com/u-boot/u-boot.git /tmp/uboot
             make -C /tmp/uboot tools-only_defconfig >/dev/null
-            make -C /tmp/uboot HOSTCC=gcc -j"$(nproc)" tools >/dev/null
+            make -C /tmp/uboot HOSTCC=gcc -j"$(nproc)" tools/mkimage >/dev/null
             sudo cp -v /tmp/uboot/tools/mkimage /usr/local/bin/mkimage
           fi
           which mkimage
