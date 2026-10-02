@@ -106,7 +106,10 @@ jobs:
           make ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- olddefconfig
           grep -E "^CONFIG_LOCALVERSION=|^CONFIG_MODVERSIONS=|^CONFIG_CFG80211=" .config
           make ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- -j"$(nproc)" vmlinux
-          make ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- arch/loongarch/boot/vmlinux.bin.gz
+          loongarch64-linux-gnu-objcopy -O binary -R .note -R .note.gnu.build-id -R .comment -S \
+            vmlinux arch/loongarch/boot/vmlinux.bin
+          gzip -n -9 -c arch/loongarch/boot/vmlinux.bin > arch/loongarch/boot/vmlinux.bin.gz
+          ls -la arch/loongarch/boot/vmlinux.bin*
           ENTRY="$(readelf -h vmlinux | awk '/Entry point address/{print $NF}')"
           echo "ENTRY=$ENTRY"
           mkdir -p "$GITHUB_WORKSPACE/out"
