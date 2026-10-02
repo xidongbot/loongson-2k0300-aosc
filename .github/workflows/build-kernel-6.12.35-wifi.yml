@@ -1,0 +1,123 @@
+name: Build AOSC 6.12.35 kernel + AIC8800 SDIO quirk (loongarch64)
+
+# 精确重建板子内核：上游 linux-6.12.tar.xz + AOSC ABBS commit 27432fb40548（6.12.35）的补丁集，
+# 再给 drivers/mmc/host/ls2kmci.c 注入 CMD53 quirk（zyly 方案）。产出 /boot/uImage。
+# 因为与板子内核同源同 config，vermagic 与 ABI 一致，通常只需替换 uImage，现有模块可复用。
+on:
+  workflow_dispatch:
+    inputs:
+      abbs_sha:
+        description: "ABBS commit of the 6.12.35 kernel recipe"
+        required: true
+        default: "27432fb40548"
+      kernel_tar:
+        description: "Upstream base tarball (AOSC spec uses linux-6.12.tar.xz)"
+        required: true
+        default: "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.tar.xz"
+      kernel_deb:
+        description: "AOSC 6.12.35 kernel package (.deb) providing /usr/src .config"
+        required: true
+        default: "https://repo-hk.aosc.io/debs/pool/stable/bsp-loongarch64-nosimd/l/linux-kernel-loongarch-2k0300-6.12.35_6.12.35-0_loongarch64.deb"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Install loongarch64 cross toolchain + kernel build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-14-loongarch64-linux-gnu binutils-loongarch64-linux-gnu \
+            make bc bison flex libssl-dev libelf-dev patch xz-utils \
+            u-boot-tools jq dwarves cpio rsync
+          for b in gcc gcc-ar gcc-nm gcc-ranlib; do
+            sudo ln -sf "/usr/bin/loongarch64-linux-gnu-${b}-14" "/usr/bin/loongarch64-linux-gnu-${b}"
+          done
+          loongarch64-linux-gnu-gcc --version | head -1
+          mkimage -V 2>&1 | head -1
+
+      - name: Fetch AOSC kernel package (authoritative .config)
+        run: |
+          curl -fL -o /tmp/kernel.deb "${{ inputs.kernel_deb }}"
+          mkdir -p kroot && dpkg-deb -x /tmp/kernel.deb kroot
+          echo "KPKG=$(pwd)/$(echo kroot/usr/src/linux-headers-*)" >> "$GITHUB_ENV"
+
+      - name: Fetch upstream linux-6.12 source
+        run: |
+          curl -fL -o /tmp/linux.tar.xz "${{ inputs.kernel_tar }}"
+          mkdir -p ksrc && tar -xf /tmp/linux.tar.xz -C ksrc --strip-components=1
+          echo "KDIR=$(pwd)/ksrc" >> "$GITHUB_ENV"
+
+      - name: Download AOSC 6.12.35 patch set
+        run: |
+          mkdir -p abbs-patches && cd abbs-patches
+          curl -s "https://api.github.com/repos/AOSC-Dev/aosc-os-abbs/contents/runtime-kernel/linux-kernel-loongarch-2k0300/autobuild/patches?ref=${{ inputs.abbs_sha }}" \
+            | jq -r '.[].download_url' > /tmp/urls.txt
+          echo "patch count: $(wc -l < /tmp/urls.txt)"
+          xargs -n1 -P8 curl -sL -O < /tmp/urls.txt
+          echo "downloaded: $(ls -1 *.patch | wc -l)"
+
+      - name: Apply AOSC patch set
+        working-directory: ksrc
+        run: |
+          set -e
+          n=0
+          for p in $(ls ../abbs-patches/*.patch | sort); do
+            n=$((n+1))
+            if ! patch -p1 --forward --batch --silent < "$p"; then
+              echo "::error::PATCH FAILED: $p"
+              patch -p1 --forward --batch --dry-run < "$p" 2>&1 | tail -25
+              exit 1
+            fi
+          done
+          echo "Applied $n patches"
+
+      - name: Inject CMD53 quirk into ls2kmci.c
+        working-directory: ksrc
+        run: |
+          python3 - <<'PY'
+          f = "drivers/mmc/host/ls2kmci.c"
+          s = open(f).read()
+          old = "\twritel(ccon, host->base + SDICMDCON);"
+          new = (
+              "\t/* [AOSC-99pi quirk] CMD53 data-mode fix: AIC8800 SDIO block transfer times out otherwise */\n"
+              "\tif (cmd->opcode == 53) {\n"
+              "\t\tu32 val = readl(host->base + SDIDCON);\n"
+              "\t\tval |= (0x3 << 24);\n"
+              "\t\twritel(val, host->base + SDIDCON);\n"
+              "\t}\n"
+              + old
+          )
+          assert s.count(old) == 1, f"expected exactly 1 anchor, got {s.count(old)}"
+          open(f, "w").write(s.replace(old, new))
+          print("CMD53 quirk injected")
+          PY
+          grep -n -B2 -A6 "opcode == 53" drivers/mmc/host/ls2kmci.c
+
+      - name: Configure and build uImage + modules
+        working-directory: ksrc
+        run: |
+          set -x
+          cp "$KPKG/.config" .config
+          make ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- olddefconfig
+          grep -E "^CONFIG_LOCALVERSION=|^CONFIG_MODVERSIONS=|^CONFIG_CFG80211=" .config
+          make ARCH=loongarch CROSS_COMPILE=loongarch64-linux-gnu- -j"$(nproc)" uImage modules
+          ls -la arch/loongarch/boot/
+          echo "ko count: $(find . -name '*.ko' | wc -l)"
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          cp -v ksrc/arch/loongarch/boot/uImage out/
+          file out/uImage
+          strings out/uImage | grep -m1 "6.12.35" || true
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-6.12.35-lsgd-wifi-quirk
+          path: out/
