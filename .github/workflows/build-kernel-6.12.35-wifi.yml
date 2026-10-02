@@ -11,9 +11,9 @@ on:
         required: true
         default: "27432fb40548"
       kernel_tar:
-        description: "Upstream base tarball (AOSC spec uses linux-6.12.tar.xz)"
+        description: "Upstream base tarball (AOSC spec uses linux-6.12.35.tar.xz)"
         required: true
-        default: "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.tar.xz"
+        default: "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.35.tar.xz"
       kernel_deb:
         description: "AOSC 6.12.35 kernel package (.deb) providing /usr/src .config"
         required: true
