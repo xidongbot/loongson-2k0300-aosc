@@ -7,8 +7,9 @@ name: Build EasyTier (loongarch64 new-world, no LSX)
 #    并用 -Z build-std 连标准库一起重编。
 #  - C 依赖（zstd-sys / kcp-sys / libmimalloc-sys / ring）用交叉 gcc + -mno-lsx 编译。
 #  - 不用 zig：zig 自带的 musl libc / compiler_rt 在 loongarch64 默认带 LSX（实测残留 398 条），
-#    且预编译无法用 CFLAGS 关闭。改用 Debian loongarch64 交叉 glibc 工具链，libc 动态链接，
-#    不进入本二进制；AOSC 的 glibc 版本更新，前向兼容。
+#    且预编译无法用 CFLAGS 关闭。
+#  - 在 Debian 容器里用 Debian 的 loongarch64 交叉 glibc 工具链（Ubuntu 没有交叉 libc）。
+#    libc 动态链接、不进入本二进制；AOSC 的 glibc 版本更新，前向兼容。
 on:
   workflow_dispatch:
     inputs:
@@ -32,8 +33,15 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    container: debian:trixie
     timeout-minutes: 90
     steps:
+      - name: Install base tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git jq xz-utils perl pkg-config
+
       - name: Resolve EasyTier ref
         id: ref
         env:
@@ -56,15 +64,11 @@ jobs:
           path: easytier
           submodules: recursive
 
-      - name: Install loongarch64 cross toolchain
+      - name: Install loongarch64 cross toolchain (Debian)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc-14-loongarch64-linux-gnu g++-14-loongarch64-linux-gnu \
+          apt-get install -y --no-install-recommends \
+            gcc-loongarch64-linux-gnu g++-loongarch64-linux-gnu \
             binutils-loongarch64-linux-gnu libc6-dev-loongarch64-cross
-          for b in gcc g++ gcc-ar gcc-nm gcc-ranlib; do
-            sudo ln -sf "/usr/bin/loongarch64-linux-gnu-${b}-14" "/usr/bin/loongarch64-linux-gnu-${b}"
-          done
           loongarch64-linux-gnu-gcc --version | head -1
           ls /usr/loongarch64-linux-gnu/lib/ | head
 
