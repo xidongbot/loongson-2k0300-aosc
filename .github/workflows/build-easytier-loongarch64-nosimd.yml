@@ -1,0 +1,141 @@
+name: Build EasyTier (loongarch64 new-world, no LSX)
+
+# 为久久派 2K0300（Loongson LA264，无 LSX/LASX）交叉编译 easytier-core / easytier-cli。
+#
+# 为什么必须这样编：
+#   - Rust 的 loongarch64 target 自 1.84 起默认开启 LSX（target spec 写死 +f,+d,+lsx,+relax）；
+#   - 预编译的 std/core/alloc 也自带 LSX 指令；
+#   - 因此仅 RUSTFLAGS="-C target-feature=-lsx" 不够，必须用 -Z build-std 连标准库一起重编，
+#     否则在 LA264 上运行会 SIGILL（AOSC/上游现有 loongarch64 二进制实测含 20 万+ 条 LSX）。
+#   - 采用上游同款 zigbuild + 静态 musl，产物可直接在 AOSC OS（新世界）运行，无 glibc 耦合。
+on:
+  workflow_dispatch:
+    inputs:
+      easytier_ref:
+        description: "EasyTier git ref（tag/branch）；留空 = 最新 release"
+        required: false
+        default: ""
+      rust_toolchain:
+        description: "Rust 工具链（需与上游 rust-toolchain.toml 一致）"
+        required: true
+        default: "1.95"
+      zig_version:
+        description: "zig 版本（供 cargo-zigbuild 使用）"
+        required: true
+        default: "0.16.0"
+      publish_release:
+        description: "把产物发布到 Release（固定 tag），便于板子直接 curl 下载"
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Resolve EasyTier ref
+        id: ref
+        env:
+          REF_IN: ${{ inputs.easytier_ref }}
+        run: |
+          set -e
+          REF="$REF_IN"
+          if [ -z "$REF" ]; then
+            REF="$(curl -fsSL https://api.github.com/repos/EasyTier/EasyTier/releases/latest | jq -r .tag_name)"
+          fi
+          [ -n "$REF" ] && [ "$REF" != "null" ] || { echo "cannot resolve ref"; exit 1; }
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "Using EasyTier ref: $REF"
+
+      - name: Checkout EasyTier
+        uses: actions/checkout@v4
+        with:
+          repository: EasyTier/EasyTier
+          ref: ${{ steps.ref.outputs.ref }}
+          path: easytier
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+          targets: loongarch64-unknown-linux-musl
+          components: rust-src, llvm-tools
+
+      - name: Setup zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ inputs.zig_version }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: easytier
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+
+      - name: Build easytier-core/cli (rebuild std, no LSX)
+        working-directory: easytier
+        env:
+          RUSTC_BOOTSTRAP: "1"
+          RUSTFLAGS: "-Ctarget-feature=-lsx"
+        run: |
+          cargo zigbuild --release \
+            --target loongarch64-unknown-linux-musl \
+            -Z build-std=std,panic_abort \
+            -p easytier --features mimalloc
+
+      - name: Verify no LSX/LASX instructions
+        working-directory: easytier
+        run: |
+          set -e
+          SYSROOT="$(rustc --print sysroot)"
+          HOST="$(rustc -vV | sed -n 's/^host: //p')"
+          OBJDUMP="$SYSROOT/lib/rustlib/$HOST/bin/llvm-objdump"
+          D="target/loongarch64-unknown-linux-musl/release"
+          fail=0
+          for b in easytier-core easytier-cli; do
+            n="$("$OBJDUMP" -d --no-show-raw-insn "$D/$b" | grep -cE '^[[:space:]]*[0-9a-f]+:[[:space:]]+x?v' || true)"
+            echo "$b: SIMD instruction lines = $n"
+            [ "$n" = "0" ] || fail=1
+          done
+          if [ "$fail" != "0" ]; then
+            echo "::error::检测到 LSX/LASX 指令，在 LA264 上会 SIGILL"
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          set -e
+          D="easytier/target/loongarch64-unknown-linux-musl/release"
+          mkdir -p out
+          cp -v "$D/easytier-core" "$D/easytier-cli" out/
+          (cd easytier && git rev-parse --short HEAD) > out/GIT_REV
+          file out/easytier-core out/easytier-cli
+          tar -C out -czf out/easytier-loongarch64-nosimd.tar.gz easytier-core easytier-cli GIT_REV
+          ls -la out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: easytier-loongarch64-nosimd
+          path: out/
+
+      - name: Publish to Release (rolling tag)
+        if: ${{ inputs.publish_release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: easytier-nosimd
+          name: EasyTier (loongarch64, no LSX)
+          body: |
+            EasyTier `${{ steps.ref.outputs.ref }}`，loongarch64 新世界、无 LSX/LASX，
+            适用于 Loongson 2K0300 (LA264)。
+
+            由 CI run ${{ github.run_id }} 构建（commit ${{ github.sha }}）。
+          files: out/easytier-loongarch64-nosimd.tar.gz
+          prerelease: true
