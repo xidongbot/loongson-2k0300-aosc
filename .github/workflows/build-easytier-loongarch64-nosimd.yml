@@ -1,13 +1,14 @@
 name: Build EasyTier (loongarch64 new-world, no LSX)
 
-# 为久久派 2K0300（Loongson LA264，无 LSX/LASX）交叉编译 easytier-core / easytier-cli。
+# 为久久派 2K0300（Loongson LA264，无 LSX/LASX）构建 easytier-core / easytier-cli。
 #
-# 为什么必须这样编：
-#   - Rust 的 loongarch64 target 自 1.84 起默认开启 LSX（target spec 写死 +f,+d,+lsx,+relax）；
-#   - 预编译的 std/core/alloc 也自带 LSX 指令；
-#   - 因此仅 RUSTFLAGS="-C target-feature=-lsx" 不够，必须用 -Z build-std 连标准库一起重编，
-#     否则在 LA264 上运行会 SIGILL（AOSC/上游现有 loongarch64 二进制实测含 20 万+ 条 LSX）。
-#   - 采用上游同款 zigbuild + 静态 musl，产物可直接在 AOSC OS（新世界）运行，无 glibc 耦合。
+# 关键点：
+#  - Rust 的 loongarch64 target 默认开 +lsx，且预编译 std 也带 LSX；必须 RUSTFLAGS=-Ctarget-feature=-lsx
+#    并用 -Z build-std 连标准库一起重编。
+#  - C 依赖（zstd-sys / kcp-sys / libmimalloc-sys / ring）用交叉 gcc + -mno-lsx 编译。
+#  - 不用 zig：zig 自带的 musl libc / compiler_rt 在 loongarch64 默认带 LSX（实测残留 398 条），
+#    且预编译无法用 CFLAGS 关闭。改用 Debian loongarch64 交叉 glibc 工具链，libc 动态链接，
+#    不进入本二进制；AOSC 的 glibc 版本更新，前向兼容。
 on:
   workflow_dispatch:
     inputs:
@@ -19,10 +20,6 @@ on:
         description: "Rust 工具链（需与上游 rust-toolchain.toml 一致）"
         required: true
         default: "1.95"
-      zig_version:
-        description: "zig 版本（供 cargo-zigbuild 使用）"
-        required: true
-        default: "0.16.0"
       publish_release:
         description: "把产物发布到 Release（固定 tag），便于板子直接 curl 下载"
         type: boolean
@@ -59,25 +56,29 @@ jobs:
           path: easytier
           submodules: recursive
 
+      - name: Install loongarch64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-14-loongarch64-linux-gnu g++-14-loongarch64-linux-gnu \
+            binutils-loongarch64-linux-gnu libc6-dev-loongarch64-cross
+          for b in gcc g++ gcc-ar gcc-nm gcc-ranlib; do
+            sudo ln -sf "/usr/bin/loongarch64-linux-gnu-${b}-14" "/usr/bin/loongarch64-linux-gnu-${b}"
+          done
+          loongarch64-linux-gnu-gcc --version | head -1
+          ls /usr/loongarch64-linux-gnu/lib/ | head
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ inputs.rust_toolchain }}
-          targets: loongarch64-unknown-linux-musl
+          targets: loongarch64-unknown-linux-gnu
           components: rust-src, llvm-tools
-
-      - name: Setup zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ inputs.zig_version }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: easytier
-
-      - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild --locked
 
       - name: Setup protoc
         uses: arduino/setup-protoc@v3
@@ -90,14 +91,16 @@ jobs:
         env:
           RUSTC_BOOTSTRAP: "1"
           RUSTFLAGS: "-Ctarget-feature=-lsx"
-          # C/C++ 依赖（zstd-sys / kcp-sys / libmimalloc-sys / ring）由 zig cc 交叉编译；
-          # 显式关闭 LSX/LASX，避免 C 代码自动向量化产出 LA264 不支持的指令。
-          CFLAGS_loongarch64_unknown_linux_musl: "-mno-lsx -mno-lasx -fno-vectorize -fno-slp-vectorize"
-          CXXFLAGS_loongarch64_unknown_linux_musl: "-mno-lsx -mno-lasx -fno-vectorize -fno-slp-vectorize"
+          CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER: "loongarch64-linux-gnu-gcc"
+          CC_loongarch64_unknown_linux_gnu: "loongarch64-linux-gnu-gcc"
+          CXX_loongarch64_unknown_linux_gnu: "loongarch64-linux-gnu-g++"
+          AR_loongarch64_unknown_linux_gnu: "loongarch64-linux-gnu-ar"
+          CFLAGS_loongarch64_unknown_linux_gnu: "-mno-lsx -mno-lasx -fno-vectorize -fno-slp-vectorize"
+          CXXFLAGS_loongarch64_unknown_linux_gnu: "-mno-lsx -mno-lasx -fno-vectorize -fno-slp-vectorize"
         run: |
-          cargo zigbuild --release \
+          cargo build --release \
             --config profile.release.strip=false \
-            --target loongarch64-unknown-linux-musl \
+            --target loongarch64-unknown-linux-gnu \
             -Z build-std=std,panic_abort \
             -p easytier --features mimalloc
 
@@ -108,7 +111,7 @@ jobs:
           SYSROOT="$(rustc --print sysroot)"
           HOST="$(rustc -vV | sed -n 's/^host: //p')"
           OBJDUMP="$SYSROOT/lib/rustlib/$HOST/bin/llvm-objdump"
-          D="target/loongarch64-unknown-linux-musl/release"
+          D="target/loongarch64-unknown-linux-gnu/release"
           fail=0
           for b in easytier-core easytier-cli; do
             n="$("$OBJDUMP" -d --no-show-raw-insn "$D/$b" | grep -cE '^[[:space:]]*[0-9a-f]+:[[:space:]]+x?v' || true)"
@@ -127,7 +130,7 @@ jobs:
       - name: Package
         run: |
           set -e
-          D="easytier/target/loongarch64-unknown-linux-musl/release"
+          D="easytier/target/loongarch64-unknown-linux-gnu/release"
           mkdir -p out
           cp -v "$D/easytier-core" "$D/easytier-cli" out/
           SYSROOT="$(rustc --print sysroot)"; HOST="$(rustc -vV | sed -n 's/^host: //p')"
@@ -151,7 +154,7 @@ jobs:
           name: EasyTier (loongarch64, no LSX)
           body: |
             EasyTier `${{ steps.ref.outputs.ref }}`，loongarch64 新世界、无 LSX/LASX，
-            适用于 Loongson 2K0300 (LA264)。
+            适用于 Loongson 2K0300 (LA264)；动态链接 glibc。
 
             由 CI run ${{ github.run_id }} 构建（commit ${{ github.sha }}）。
           files: out/easytier-loongarch64-nosimd.tar.gz
