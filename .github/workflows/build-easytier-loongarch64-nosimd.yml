@@ -40,7 +40,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates curl git jq xz-utils perl pkg-config
+            ca-certificates curl git jq xz-utils perl pkg-config unzip
 
       - name: Resolve EasyTier ref
         id: ref
