@@ -95,3 +95,12 @@ sudo dd if=/dev/sda of=/dev/mmcblk0 bs=1M count=3694 conv=fsync status=progress
 （`curl --interface wlan0 http://www.baidu.com` → HTTP 200）。
 
 详见 [`wifi/README.md`](wifi/README.md)。
+
+## 后续：EasyTier（LoongArch 无 LSX 构建）
+
+板载 SoC（LA264）不支持 LSX/LASX，而 AOSC 仓库与上游的 loongarch64 `easytier`
+二进制都含大量 LSX 指令，运行即 `SIGILL`。本仓库用 GitHub Actions 交叉编译出
+**无 LSX** 的 `easytier-core`/`easytier-cli`（新世界、动态链接 glibc），发布到
+Release tag `easytier-nosimd`，板子可直接 `curl` 下载。
+
+详见 [`docs/easytier-loongarch64-nosimd.md`](docs/easytier-loongarch64-nosimd.md)。
