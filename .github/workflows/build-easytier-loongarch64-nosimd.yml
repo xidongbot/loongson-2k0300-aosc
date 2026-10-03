@@ -46,13 +46,18 @@ jobs:
         id: ref
         env:
           REF_IN: ${{ inputs.easytier_ref }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           REF="$REF_IN"
           if [ -z "$REF" ]; then
-            REF="$(curl -fsSL https://api.github.com/repos/EasyTier/EasyTier/releases/latest | jq -r .tag_name)"
+            REF="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/EasyTier/EasyTier/releases/latest | jq -r .tag_name || true)"
           fi
-          [ -n "$REF" ] && [ "$REF" != "null" ] || { echo "cannot resolve ref"; exit 1; }
+          if [ -z "$REF" ] || [ "$REF" = "null" ]; then
+            echo "::warning::无法解析最新 release（API 限流？），回退到 main"
+            REF="main"
+          fi
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "Using EasyTier ref: $REF"
 
