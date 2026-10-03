@@ -73,9 +73,16 @@ jobs:
         run: |
           apt-get install -y --no-install-recommends \
             gcc-loongarch64-linux-gnu g++-loongarch64-linux-gnu \
-            binutils-loongarch64-linux-gnu libc6-dev-loong64-cross
+            binutils-loongarch64-linux-gnu libc6-dev-loong64-cross libclang-dev
           loongarch64-linux-gnu-gcc --version | head -1
           ls /usr/loongarch64-linux-gnu/lib/ | head
+
+      - name: Locate libclang
+        run: |
+          LIB="$(find /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu -maxdepth 1 -name 'libclang.so*' 2>/dev/null | head -1)"
+          [ -n "$LIB" ] || { echo "::error::libclang not found"; ls -R /usr/lib/llvm-* 2>/dev/null | head; exit 1; }
+          echo "LIBCLANG_PATH=$(dirname "$LIB")" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=$(dirname "$LIB")"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -106,6 +113,7 @@ jobs:
           AR_loongarch64_unknown_linux_gnu: "loongarch64-linux-gnu-ar"
           CFLAGS_loongarch64_unknown_linux_gnu: "-mno-lsx -mno-lasx -fno-tree-vectorize"
           CXXFLAGS_loongarch64_unknown_linux_gnu: "-mno-lsx -mno-lasx -fno-tree-vectorize"
+          BINDGEN_EXTRA_CLANG_ARGS_loongarch64-unknown-linux-gnu: "--sysroot=/usr/loongarch64-linux-gnu"
         run: |
           cargo build --release \
             --config profile.release.strip=false \
