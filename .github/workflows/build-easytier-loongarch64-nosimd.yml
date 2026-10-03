@@ -90,6 +90,10 @@ jobs:
         env:
           RUSTC_BOOTSTRAP: "1"
           RUSTFLAGS: "-Ctarget-feature=-lsx"
+          # C/C++ 依赖（zstd-sys / kcp-sys / libmimalloc-sys / ring）由 zig cc 交叉编译；
+          # 显式关闭 LSX/LASX，避免 C 代码自动向量化产出 LA264 不支持的指令。
+          CFLAGS_loongarch64_unknown_linux_musl: "-mno-lsx -mno-lasx"
+          CXXFLAGS_loongarch64_unknown_linux_musl: "-mno-lsx -mno-lasx"
         run: |
           cargo zigbuild --release \
             --target loongarch64-unknown-linux-musl \
@@ -111,6 +115,8 @@ jobs:
             [ "$n" = "0" ] || fail=1
           done
           if [ "$fail" != "0" ]; then
+            echo "--- sample SIMD lines (easytier-core) ---"
+            "$OBJDUMP" -d --no-show-raw-insn "$D/easytier-core" | grep -E '^[[:space:]]*[0-9a-f]+:[[:space:]]+x?v' | head -20 || true
             echo "::error::检测到 LSX/LASX 指令，在 LA264 上会 SIGILL"
             exit 1
           fi
