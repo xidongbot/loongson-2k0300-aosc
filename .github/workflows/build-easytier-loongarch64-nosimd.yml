@@ -104,8 +104,8 @@ jobs:
           CC_loongarch64_unknown_linux_gnu: "loongarch64-linux-gnu-gcc"
           CXX_loongarch64_unknown_linux_gnu: "loongarch64-linux-gnu-g++"
           AR_loongarch64_unknown_linux_gnu: "loongarch64-linux-gnu-ar"
-          CFLAGS_loongarch64_unknown_linux_gnu: "-mno-lsx -mno-lasx -fno-vectorize -fno-slp-vectorize"
-          CXXFLAGS_loongarch64_unknown_linux_gnu: "-mno-lsx -mno-lasx -fno-vectorize -fno-slp-vectorize"
+          CFLAGS_loongarch64_unknown_linux_gnu: "-mno-lsx -mno-lasx -fno-tree-vectorize"
+          CXXFLAGS_loongarch64_unknown_linux_gnu: "-mno-lsx -mno-lasx -fno-tree-vectorize"
         run: |
           cargo build --release \
             --config profile.release.strip=false \
