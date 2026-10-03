@@ -68,7 +68,7 @@ jobs:
         run: |
           apt-get install -y --no-install-recommends \
             gcc-loongarch64-linux-gnu g++-loongarch64-linux-gnu \
-            binutils-loongarch64-linux-gnu libc6-dev-loongarch64-cross
+            binutils-loongarch64-linux-gnu libc6-dev-loong64-cross
           loongarch64-linux-gnu-gcc --version | head -1
           ls /usr/loongarch64-linux-gnu/lib/ | head
 
