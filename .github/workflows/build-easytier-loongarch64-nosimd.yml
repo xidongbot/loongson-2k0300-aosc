@@ -96,6 +96,7 @@ jobs:
           CXXFLAGS_loongarch64_unknown_linux_musl: "-mno-lsx -mno-lasx -fno-vectorize -fno-slp-vectorize"
         run: |
           cargo zigbuild --release \
+            --config profile.release.strip=false \
             --target loongarch64-unknown-linux-musl \
             -Z build-std=std,panic_abort \
             -p easytier --features mimalloc
@@ -129,6 +130,8 @@ jobs:
           D="easytier/target/loongarch64-unknown-linux-musl/release"
           mkdir -p out
           cp -v "$D/easytier-core" "$D/easytier-cli" out/
+          SYSROOT="$(rustc --print sysroot)"; HOST="$(rustc -vV | sed -n 's/^host: //p')"
+          "$SYSROOT/lib/rustlib/$HOST/bin/llvm-strip" --strip-all out/easytier-core out/easytier-cli || true
           (cd easytier && git rev-parse --short HEAD) > out/GIT_REV
           file out/easytier-core out/easytier-cli
           tar -C out -czf out/easytier-loongarch64-nosimd.tar.gz easytier-core easytier-cli GIT_REV
